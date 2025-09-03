@@ -12,4 +12,4 @@ Eyes Tracker is a Flutter app that demonstrates real-time gaze tracking and cali
 
 ## Getting Started
 
-This project is a starting point for a Flutter proctoring apps.
+This project is a starting point for Flutter proctoring apps.
