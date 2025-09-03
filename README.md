@@ -1,16 +1,15 @@
 # eyes_tracker
 
-A new Flutter project.
+Eyes Tracker is a Flutter app that demonstrates real-time gaze tracking and calibration. The app highlights how eye-tracking can be used for interaction, monitoring, and proctoring scenarios (e.g., exam settings).
+
+1. Currently running on Android, Web support coming soon.
+
+2. Includes a calibration setup flow with a guided showcase for first-time users.
+
+3. Built with Flutter + Riverpod + native gaze-tracking plugin (EyedID).
+
+4. Clean architecture that makes it easy to extend
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+This project is a starting point for a Flutter proctoring apps.
