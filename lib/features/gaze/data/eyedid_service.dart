@@ -1,0 +1,219 @@
+import 'dart:async';
+import 'package:eyedid_flutter/constants/eyedid_flutter_calibration_option.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:eyedid_flutter/eyedid_flutter.dart';
+import 'package:eyedid_flutter/eyedid_flutter_initialized_result.dart';
+import 'package:eyedid_flutter/gaze_tracker_options.dart';
+import 'package:eyedid_flutter/events/eyedid_flutter_metrics.dart';
+import 'package:eyedid_flutter/events/eyedid_flutter_status.dart';
+import 'package:eyedid_flutter/events/eyedid_flutter_calibration.dart';
+import '../models/gaze_point.dart';
+import '../models/calibration_state.dart';
+import 'package:eyedid_flutter/events/eyedid_flutter_drop.dart';
+
+import '../../../secrets.dart'; // dev only
+
+class EyedidService {
+  static final _sdk = EyedidFlutter();
+
+  EyedidService._();
+
+  Future<bool> isgazeInitialized() async {
+    try {
+      await _sdk.startTracking();
+      await _sdk.stopTracking();
+      return true;
+    } on PlatformException {
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /* Future<T> runSafely<T>(
+    Future<T> Function(EyedidService s) fn, {
+    bool allowLazyReinit = false,
+    Duration probeTimeout = const Duration(milliseconds: 400),
+    Duration initTimeout = const Duration(seconds: 8),
+  }) async {
+    if (_ready) {
+      final ok = await probeReady(timeout: probeTimeout);
+      if (ok) return fn(_sdk);
+    }
+    if (allowLazyReinit) {
+      await initializeOnce(timeout: initTimeout);
+      return fn(_sdk);
+    }
+    throw StateError('Eyedid SDK not initialized');
+  } */
+
+  Future<bool> probeReady({
+    Duration timeout = const Duration(milliseconds: 400),
+  }) async {
+    try {
+      await _sdk.startTracking().timeout(timeout);
+      await _sdk.stopTracking();
+      return true;
+    } on TimeoutException {
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  static final EyedidService _instance = EyedidService._();
+  static EyedidService get instance => _instance;
+
+  final _gazeCtrl = StreamController<GazePoint>.broadcast();
+  final _statusCtrl = StreamController<String>.broadcast();
+  final _calibCtrl = StreamController<CalibrationState>.broadcast();
+  final _metricsCtrl = StreamController<MetricsInfo>.broadcast();
+  final _dropCtrl = StreamController<String>.broadcast();
+
+  StreamSubscription? _trackSub, _statusSub, _calibSub, _dropSub;
+
+  Future<bool> ensureCameraPermission() async {
+    final ok = await _sdk.checkCameraPermission();
+    return ok ? true : await _sdk.requestCameraPermission();
+  }
+
+  Future<bool> requestCameraPermission() async {
+    return await _sdk.requestCameraPermission();
+  }
+
+  Future<String> initialize() async {
+    final options =
+        GazeTrackerOptionsBuilder()
+            .setPreset(CameraPreset.vga640x480)
+            .setUseGazeFilter(true)
+            .setUseBlink(false)
+            .setUseUserStatus(false)
+            .build();
+
+    final res = await _sdk.initGazeTracker(
+      licenseKey: licenseKey,
+      options: options,
+    );
+    if (res.result ||
+        res.message == InitializedResult.isAlreadyAttempting ||
+        res.message ==
+            InitializedResult.gazeTrackerAlreadyInitialized) {
+      _wireStreams();
+      return _sdk.getPlatformVersion();
+    }
+    throw PlatformException(
+      code: 'init_failed',
+      message: res.message,
+    );
+  }
+
+  void _wireStreams() {
+    _trackSub?.cancel();
+    _statusSub?.cancel();
+    _calibSub?.cancel();
+    _dropSub?.cancel();
+
+    _trackSub = _sdk.getTrackingEvent().listen((e) {
+      final metrics = MetricsInfo(e);
+      final ok =
+          metrics.gazeInfo.trackingState == TrackingState.success;
+      _gazeCtrl.add(
+        GazePoint(
+          x: metrics.gazeInfo.gaze.x,
+          y: metrics.gazeInfo.gaze.y,
+          trackingOk: ok, //green point when ok, else red
+        ),
+      );
+      _metricsCtrl.add(metrics);
+    });
+
+    _statusSub = _sdk.getStatusEvent().listen((e) {
+      final status = StatusInfo(e);
+      debugPrint('Status event: ${status.type}');
+      _statusCtrl.add(
+        status.type == StatusType.start
+            ? 'start' // show gaze point
+            : 'stop:${status.errorType?.name ?? ''}',
+      );
+    });
+
+    _dropSub = _sdk.getDropEvent().listen((e) {
+      final drop = DropInfo(e);
+      // handle drop events if needed
+      _dropCtrl.add('Dropped at:${drop.timestamp}');
+    });
+
+    _calibSub = _sdk.getCalibrationEvent().listen((e) async {
+      final calib = CalibrationInfo(e);
+      debugPrint('Calibration event: ${calib.type}');
+      switch (calib.type) {
+        case CalibrationType.nextPoint:
+          _calibCtrl.add(
+            CalibrationState(
+              inProgress: true,
+              nextX: calib.next!.x,
+              nextY: calib.next!.y,
+              progress: 0,
+            ),
+          );
+          await Future<void>.delayed(
+            const Duration(milliseconds: 500),
+          );
+          _sdk.startCollectSamples(); //Ensure the calibration target is displayed before calling this function
+          break;
+        case CalibrationType.progress:
+          _calibCtrl.add(
+            CalibrationState(
+              inProgress: true,
+              progress: calib.progress ?? 0,
+            ),
+          );
+          break;
+        case CalibrationType.finished:
+        case CalibrationType.canceled:
+        case CalibrationType.unknown:
+          _calibCtrl.add(const CalibrationState(inProgress: false));
+          break;
+      }
+    });
+  }
+
+  // Global Streams to listen to
+  Stream<GazePoint> gaze$() => _gazeCtrl.stream;
+  Stream<String> status$() => _statusCtrl.stream;
+  Stream<CalibrationState> calibration$() => _calibCtrl.stream;
+  Stream<MetricsInfo> metrics$() => _metricsCtrl.stream;
+  Stream<String> drop$() => _dropCtrl.stream;
+
+  // SDK version
+  Future<String> get version => _sdk.getPlatformVersion();
+
+  // SDK control methods
+  Future<void> startTracking() => _sdk.startTracking();
+  Future<void> stopTracking() => _sdk.stopTracking();
+  Future<bool> isTracking() => _sdk.isTracking();
+  Future<bool> isCalibrating() => _sdk.isCalibrating();
+
+  Future<void> startCalibration({bool usePrevious = true}) =>
+      _sdk.startCalibration(
+        CalibrationMode.five,
+        usePreviousCalibration: usePrevious,
+      );
+
+  Future<void> stopCalibration() => _sdk.stopCalibration();
+
+  void dispose() {
+    stopTracking();
+    _trackSub?.cancel();
+    _statusSub?.cancel();
+    _calibSub?.cancel();
+    _dropSub?.cancel();
+    _gazeCtrl.close();
+    _metricsCtrl.close();
+    _statusCtrl.close();
+    _calibCtrl.close();
+    _dropCtrl.close();
+    // _sdk.releaseGazeTracker();
+  }
+}
