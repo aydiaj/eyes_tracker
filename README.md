@@ -6,7 +6,7 @@ Eyes Tracker is a Flutter app that demonstrates real-time gaze tracking and cali
 
 2. Includes a calibration setup flow with a guided showcase for first-time users.
 
-3. Built with Flutter + Riverpod + native gaze-tracking plugin (EyedID).
+3. Built with Flutter + Riverpod + native gaze-tracking plugin (Eyedid).
 
 4. Clean architecture that makes it easy to extend
 
