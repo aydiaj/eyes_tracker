@@ -31,13 +31,11 @@ class _GazePageState extends ConsumerState<GazePage> {
         await prefs.setBool('did_run', true);
       },
       onDismiss: (key) async {
-        // Mark as done even if user skips/dismisses
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('did_run', true);
       },
     );
 
-    // 2) Only START the tour if not shown before
     _maybeStartShowcase();
   }
 
@@ -52,7 +50,6 @@ class _GazePageState extends ConsumerState<GazePage> {
           _scope,
         ).startShowCase([_calibrationKey]);
       } catch (e) {
-        // In dev/hot-reload you won’t crash; check logs instead.
         debugPrint('Showcase start failed: $e');
       }
     });
@@ -137,7 +134,10 @@ class _GazePageState extends ConsumerState<GazePage> {
               Consumer(
                 builder: (ctx, ref, _) {
                   final conn = ref.watch(connectivityProvider);
-                  return ConnectivityBannar(isConnected: conn.online);
+                  return ConnectivityBannar(
+                    isConnected: conn.online,
+                    hasIF: conn.hasInterface,
+                  );
                 },
               ),
               RepaintBoundary(

@@ -31,7 +31,10 @@ class CalibPage extends ConsumerWidget {
               Consumer(
                 builder: (ctx, ref, _) {
                   final conn = ref.watch(connectivityProvider);
-                  return ConnectivityBannar(isConnected: conn.online);
+                  return ConnectivityBannar(
+                    isConnected: conn.online,
+                    hasIF: conn.hasInterface,
+                  );
                 },
               ),
               RepaintBoundary(

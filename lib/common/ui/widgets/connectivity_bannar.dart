@@ -2,7 +2,12 @@ import 'package:flutter/material.dart';
 
 class ConnectivityBannar extends StatefulWidget {
   final bool isConnected;
-  const ConnectivityBannar({super.key, required this.isConnected});
+  final bool hasIF;
+  const ConnectivityBannar({
+    super.key,
+    required this.isConnected,
+    required this.hasIF,
+  });
 
   @override
   State<ConnectivityBannar> createState() =>
@@ -60,7 +65,9 @@ class _ConnectivityBannarState extends State<ConnectivityBannar> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
                       Text(
-                        "Connecting .. ",
+                        widget.hasIF
+                            ? "Connecting .. "
+                            : "Waiting for network",
                         style: TextStyle(color: Colors.white),
                       ),
                       SizedBox(width: 8.0),

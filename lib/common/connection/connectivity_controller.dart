@@ -39,8 +39,11 @@ class ConnectivityController extends Notifier<ConnectivityState> {
 
   Future<void> _wireStreams() async {
     _onlineSub?.cancel();
-    _onlineSub = _svc.online$().listen((isOnline) {
-      state = state.copyWith(online: isOnline);
+    _onlineSub = _svc.online$().listen((isOnline) async {
+      state = state.copyWith(
+        online: isOnline,
+        hasInterface: await _svc.hasNetworkInterface(), //new
+      );
     });
   }
 
