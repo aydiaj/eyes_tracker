@@ -12,9 +12,12 @@ import '../models/gaze_point.dart';
 import '../models/calibration_state.dart';
 import 'package:eyedid_flutter/events/eyedid_flutter_drop.dart';
 
-import '../../../secrets.dart'; // dev only
+import '../../../secrets.dart';
+import '../models/proctor_metric.dart' as prm;
+import 'gaze_service.dart';
 
-class EyedidService {
+//for mobile
+class EyedidService implements GazeService {
   static final _sdk = EyedidFlutter();
 
   EyedidService._();
@@ -30,23 +33,6 @@ class EyedidService {
       return false;
     }
   }
-
-  /* Future<T> runSafely<T>(
-    Future<T> Function(EyedidService s) fn, {
-    bool allowLazyReinit = false,
-    Duration probeTimeout = const Duration(milliseconds: 400),
-    Duration initTimeout = const Duration(seconds: 8),
-  }) async {
-    if (_ready) {
-      final ok = await probeReady(timeout: probeTimeout);
-      if (ok) return fn(_sdk);
-    }
-    if (allowLazyReinit) {
-      await initializeOnce(timeout: initTimeout);
-      return fn(_sdk);
-    }
-    throw StateError('Eyedid SDK not initialized');
-  } */
 
   Future<bool> probeReady({
     Duration timeout = const Duration(milliseconds: 400),
@@ -68,20 +54,23 @@ class EyedidService {
   final _gazeCtrl = StreamController<GazePoint>.broadcast();
   final _statusCtrl = StreamController<String>.broadcast();
   final _calibCtrl = StreamController<CalibrationState>.broadcast();
-  final _metricsCtrl = StreamController<MetricsInfo>.broadcast();
+  final _metricsCtrl = StreamController<prm.ProctorTick>.broadcast();
   final _dropCtrl = StreamController<String>.broadcast();
 
   StreamSubscription? _trackSub, _statusSub, _calibSub, _dropSub;
 
+  @override
   Future<bool> ensureCameraPermission() async {
     final ok = await _sdk.checkCameraPermission();
     return ok ? true : await _sdk.requestCameraPermission();
   }
 
+  @override
   Future<bool> requestCameraPermission() async {
     return await _sdk.requestCameraPermission();
   }
 
+  @override
   Future<String> initialize() async {
     final options =
         GazeTrackerOptionsBuilder()
@@ -125,7 +114,17 @@ class EyedidService {
           trackingOk: ok, //green point when ok, else red
         ),
       );
-      _metricsCtrl.add(metrics);
+      _metricsCtrl.add(
+        prm.ProctorTick(
+          tsMs: metrics.timestamp,
+          tracking: _mapEyedIdTracking(
+            metrics.gazeInfo.trackingState,
+          ),
+          screen: _mapEyedIdScreen(metrics.gazeInfo.screenState),
+          x: metrics.gazeInfo.gaze.x,
+          y: metrics.gazeInfo.gaze.y,
+        ),
+      );
     });
 
     _statusSub = _sdk.getStatusEvent().listen((e) {
@@ -179,30 +178,65 @@ class EyedidService {
     });
   }
 
+  prm.TrackingState _mapEyedIdTracking(TrackingState s) {
+    switch (s) {
+      case TrackingState.success:
+        return prm.TrackingState.success;
+      case TrackingState.faceMissing:
+        return prm.TrackingState.faceMissing;
+      case TrackingState.gazeNotFound:
+        return prm.TrackingState.gazeNotFound;
+    }
+  }
+
+  prm.ScreenState _mapEyedIdScreen(ScreenState s) {
+    switch (s) {
+      case ScreenState.insideOfScreen:
+        return prm.ScreenState.insideOfScreen;
+      case ScreenState.outsideOfScreen:
+        return prm.ScreenState.outsideOfScreen;
+      case ScreenState.unknown:
+        return prm.ScreenState.unknown;
+    }
+  }
+
   // Global Streams to listen to
+  @override
   Stream<GazePoint> gaze$() => _gazeCtrl.stream;
+  @override
   Stream<String> status$() => _statusCtrl.stream;
+  @override
   Stream<CalibrationState> calibration$() => _calibCtrl.stream;
-  Stream<MetricsInfo> metrics$() => _metricsCtrl.stream;
+  @override
+  Stream<prm.ProctorTick> metrics$() => _metricsCtrl.stream;
+  @override
   Stream<String> drop$() => _dropCtrl.stream;
 
   // SDK version
+  @override
   Future<String> get version => _sdk.getPlatformVersion();
 
   // SDK control methods
+  @override
   Future<void> startTracking() => _sdk.startTracking();
+  @override
   Future<void> stopTracking() => _sdk.stopTracking();
+  @override
   Future<bool> isTracking() => _sdk.isTracking();
+  @override
   Future<bool> isCalibrating() => _sdk.isCalibrating();
 
+  @override
   Future<void> startCalibration({bool usePrevious = true}) =>
       _sdk.startCalibration(
         CalibrationMode.five,
         usePreviousCalibration: usePrevious,
       );
 
+  @override
   Future<void> stopCalibration() => _sdk.stopCalibration();
 
+  @override
   void dispose() {
     stopTracking();
     _trackSub?.cancel();
@@ -217,3 +251,5 @@ class EyedidService {
     // _sdk.releaseGazeTracker();
   }
 }
+
+GazeService createImpl() => EyedidService.instance;

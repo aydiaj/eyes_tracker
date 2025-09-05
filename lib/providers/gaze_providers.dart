@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../common/utils/enum.dart';
 import '../features/gaze/controllers/gaze_controller.dart';
 import '../features/gaze/controllers/gaze_state.dart';
-import '../features/gaze/data/eyedid_service.dart';
+import '../features/gaze/data/gaze_service.dart';
 import '../features/gaze/models/proctor_score.dart';
 
-final gazeDataSourceProvider = Provider(
-  (ref) => EyedidService.instance,
-);
+final gazeServiceProvider = Provider<GazeService>((ref) {
+  final s = createGazeService(); // compile-time picks the impl
+  ref.onDispose(s.dispose);
+  return s;
+});
 
 final gazeControllerProvider =
     AutoDisposeNotifierProvider<GazeController, GazeState>(

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:eyedid_flutter/events/eyedid_flutter_metrics.dart';
+import 'dart:math';
 import 'package:eyes_tracker/common/utils/enum.dart';
 import 'package:eyes_tracker/features/gaze/models/proctor_score.dart';
 import 'package:eyes_tracker/providers/gaze_providers.dart';
@@ -8,21 +8,22 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../common/connection/connectivity_controller.dart';
 import '../../../providers/conn_providers.dart';
-import '../data/eyedid_service.dart';
+import '../data/gaze_service.dart';
 import '../models/calibration_state.dart';
 import '../models/gaze_point.dart';
 import '../models/proctor_counters.dart';
+import '../models/proctor_metric.dart' as prm;
 import 'gaze_state.dart';
 
 class GazeController extends AutoDisposeNotifier<GazeState> {
-  late final EyedidService _ds;
+  late final GazeService _ds;
   Size? _screenSize;
 
   GazeController();
 
   @override
   GazeState build() {
-    _ds = ref.read(gazeDataSourceProvider);
+    _ds = ref.read(gazeServiceProvider);
     final gazeState = const GazeState();
     // schedule the async init after provider is created
     Future.microtask(init);
@@ -84,6 +85,8 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     _startReadyWatchdog();
     try {
       final camOk = await _ds.ensureCameraPermission();
+
+      debugPrint('ensureCameraPermission: $camOk');
 
       if (!camOk) {
         if (!state.isRetrying) {
@@ -177,7 +180,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
   }
 
   /// to verify the native side didn’t die.
-  Future<bool> checkStillReady() async {
+  /* Future<bool> checkStillReady() async {
     final ok = await _ds.probeReady(
       timeout: const Duration(milliseconds: 400),
     );
@@ -189,12 +192,12 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
       // retry();
     }
     return ok;
-  }
+  } */
 
   StreamSubscription<GazePoint>? _gazeSub;
   StreamSubscription<String>? _statusSub;
   StreamSubscription<CalibrationState>? _calibSub;
-  StreamSubscription<MetricsInfo>? _metricsSub;
+  StreamSubscription<prm.ProctorTick>? _metricsSub;
   StreamSubscription<String>? _dropSub;
 
   final _counters = ProctorCounters();
@@ -217,16 +220,31 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     });
 
     _metricsSub = _ds.metrics$().listen((m) {
+      /*  debugPrint(
+        'metrics details: x: ${m.x} , y: ${m.y}, screen: ${m.screen}, tracking: ${m.tracking}, tMS: ${m.tsMs}',
+      ); */
       _accumulateFromMetrics(m);
     });
 
     _dropSub = _ds.drop$().listen((dts) {
-      //state = state.copyWith(status: 'dropped', showGaze: false);
+      state = state.copyWith(status: 'dropped', trackingOk: false);
     });
 
+    /*  uninitialized,
+  initializing,
+  ready,
+  tracking,
+  calibrating,
+  paused,
+  error, */
     _statusSub = _ds.status$().listen((s) {
+      debugPrint(s);
       if (s.startsWith('start')) {
         state = state.copyWith(status: 'Tracking', showGaze: true);
+      } else if (s.contains('tracking')) {
+        state = state.copyWith(status: 'Tracking', showGaze: true);
+      } else if (s.contains('ready')) {
+        state = state.copyWith(status: 'Ready', showGaze: false);
       } else {
         print(s);
         state = state.copyWith(status: 'stopped', showGaze: false);
@@ -300,8 +318,8 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     }
   }
 
-  void _accumulateFromMetrics(MetricsInfo info) {
-    final ts = info.timestamp;
+  void _accumulateFromMetrics(prm.ProctorTick info) {
+    final ts = info.tsMs;
     int delta = 0;
 
     if (_counters.lastTs != 0) {
@@ -312,20 +330,25 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     _counters.lastTs = ts;
     _counters.sessionMs += delta;
 
-    final tracking = info.gazeInfo.trackingState;
-    final screen = info.gazeInfo.screenState;
+    final tracking = info.tracking;
+    final screen = info.screen;
 
-    if (tracking == TrackingState.faceMissing) {
+    if (tracking == prm.TrackingState.copypaste) {
+      _counters.copyEvents++;
+    }
+    if (screen == prm.ScreenState.changetab) {
+      _counters.offScreenMs += delta;
+    } else if (tracking == prm.TrackingState.faceMissing) {
       _counters.faceMissingMs += delta;
-    } else if (screen == ScreenState.outsideOfScreen) {
+    } else if (screen == prm.ScreenState.outsideOfScreen ||
+        screen == prm.ScreenState.unknown) {
       _counters.offScreenMs += delta;
     } else {
-      final gx = info.gazeInfo.gaze.x, gy = info.gazeInfo.gaze.y;
+      final gx = info.x, gy = info.y;
       if (!_inRoi(gx, gy)) _counters.lookAwayMs += delta;
     }
   }
 
-  // Define your screen ROI (tweak as you like)
   bool _inRoi(double x, double y) {
     final s = _screenSize;
     if (s == null) return true; // if unknown, don't penalize
@@ -340,10 +363,10 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     final rFace = _counters.faceMissingMs / total;
     final rOff = _counters.offScreenMs / total;
     final rLook = _counters.lookAwayMs / total;
-
+    final rCopies = _counters.copyEvents;
     // Weights: faceMissing 50%, offScreen 30%, lookAway 20% (tune as needed)
     final penalty =
-        100.0 * (0.55 * rFace + 0.30 * rOff + 0.15 * rLook);
+        100.0 * (0.55 * rFace + 0.30 * rOff + 0.15 * rLook) - rCopies;
     return (100.0 - penalty).clamp(0.0, 100.0);
   }
 

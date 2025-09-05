@@ -4,6 +4,7 @@ class ProctorCounters {
   int faceMissingMs = 0;
   int offScreenMs = 0;
   int lookAwayMs = 0;
+  int copyEvents = 0;
 
   void reset() {
     lastTs = 0;
@@ -11,5 +12,6 @@ class ProctorCounters {
     faceMissingMs = 0;
     offScreenMs = 0;
     lookAwayMs = 0;
+    copyEvents = 0;
   }
 }
