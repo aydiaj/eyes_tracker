@@ -130,10 +130,13 @@ class EyedidService implements GazeService {
     _statusSub = _sdk.getStatusEvent().listen((e) {
       final status = StatusInfo(e);
       debugPrint('Status event: ${status.type}');
+      final error = status.errorType ?? StatusErrorType.none;
       _statusCtrl.add(
         status.type == StatusType.start
             ? 'start' // show gaze point
-            : 'stop:${status.errorType?.name ?? ''}',
+            : error == StatusErrorType.none
+            ? 'stop'
+            : 'error: ${status.errorType?.name ?? ''}',
       );
     });
 
@@ -173,6 +176,7 @@ class EyedidService implements GazeService {
         case CalibrationType.canceled:
         case CalibrationType.unknown:
           _calibCtrl.add(const CalibrationState(inProgress: false));
+          _sdk.stopTracking();
           break;
       }
     });
@@ -227,14 +231,19 @@ class EyedidService implements GazeService {
   Future<bool> isCalibrating() => _sdk.isCalibrating();
 
   @override
-  Future<void> startCalibration({bool usePrevious = true}) =>
-      _sdk.startCalibration(
-        CalibrationMode.five,
-        usePreviousCalibration: usePrevious,
-      );
+  Future<void> startCalibration({bool usePrevious = true}) async {
+    await _sdk.startTracking();
+    _sdk.startCalibration(
+      CalibrationMode.five,
+      usePreviousCalibration: usePrevious,
+    );
+  }
 
   @override
-  Future<void> stopCalibration() => _sdk.stopCalibration();
+  Future<void> stopCalibration() async {
+    await _sdk.stopCalibration();
+    _sdk.stopTracking();
+  }
 
   @override
   void dispose() {

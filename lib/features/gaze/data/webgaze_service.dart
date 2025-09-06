@@ -204,30 +204,38 @@ class WebGazeService extends GazeService {
     });
 
     _trackSub = _sdk.getGazeStream().listen((e) {
-      _lastGaze = e;
+      final hasSignificantChange =
+          _lastGaze == null ||
+          (e.x - _lastGaze!.x).abs() > 5.0 ||
+          (e.y - _lastGaze!.y).abs() > 5.0;
+
       _lastGazeMS = DateTime.now().millisecondsSinceEpoch;
 
-      final ok = e.confidence >= _confOk;
+      if (hasSignificantChange) {
+        _lastGaze = e;
+        final ok = e.confidence >= _confOk;
 
-      final dpr =
-          WidgetsBinding
-              .instance
-              .platformDispatcher
-              .views
-              .first
-              .devicePixelRatio;
+        final dpr =
+            WidgetsBinding
+                .instance
+                .platformDispatcher
+                .views
+                .first
+                .devicePixelRatio;
 
-      final x = e.x / dpr;
-      final y = e.y / dpr;
+        final x = e.x / dpr;
+        final y = e.y / dpr;
 
-      _gazeCtrl.add(
-        GazePoint(
-          x: x,
-          y: y,
-          trackingOk: ok, //green point when ok, else red
-        ),
-      );
-      debugPrint('$x    $y');
+        _gazeCtrl.add(
+          GazePoint(
+            x: x,
+            y: y,
+            trackingOk: ok, //green point when ok, else red
+          ),
+        );
+      }
+
+      // debugPrint('$x    $y');
 
       /* final inBounds =
           x >= 0 && y >= 0 && x <= vp.width && y <= vp.height;

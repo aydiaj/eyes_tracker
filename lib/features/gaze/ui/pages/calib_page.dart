@@ -51,12 +51,30 @@ class CalibPage extends ConsumerWidget {
                             gazeControllerProvider.notifier,
                           );
                           if (inCalib) {
-                            return ElevatedButton(
-                              onPressed: () {
-                                ctrl.stopCalibration();
-                                Navigator.of(context).pop();
-                              },
-                              child: const Text('STOP/DONE'),
+                            return Column(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Keep looking at the circle',
+                                  textAlign: TextAlign.center,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.labelMedium!.copyWith(
+                                    fontWeight: FontWeight.w400,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                                SizedBox(height: 20),
+                                ElevatedButton(
+                                  onPressed: () {
+                                    ctrl.stopCalibration();
+                                    Navigator.of(context).pop();
+                                  },
+                                  child: const Text('STOP/DONE'),
+                                ),
+                                SizedBox(height: 80),
+                              ],
                             );
                           } else {
                             return Column(

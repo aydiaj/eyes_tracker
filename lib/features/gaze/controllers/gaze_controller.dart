@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:eyes_tracker/common/utils/enum.dart';
 import 'package:eyes_tracker/features/gaze/models/proctor_score.dart';
 import 'package:eyes_tracker/providers/gaze_providers.dart';
@@ -227,7 +226,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     });
 
     _dropSub = _ds.drop$().listen((dts) {
-      state = state.copyWith(status: 'dropped', trackingOk: false);
+      state = state.copyWith(trackingOk: false);
     });
 
     /*  uninitialized,
@@ -238,16 +237,16 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
   paused,
   error, */
     _statusSub = _ds.status$().listen((s) {
-      debugPrint(s);
-      if (s.startsWith('start')) {
-        state = state.copyWith(status: 'Tracking', showGaze: true);
-      } else if (s.contains('tracking')) {
+      // debugPrint(s);
+      // final currentstatus = state.status;
+      //  debugPrint(currentstatus);
+      if (s.startsWith('start') || s.contains('tracking')) {
         state = state.copyWith(status: 'Tracking', showGaze: true);
       } else if (s.contains('ready')) {
         state = state.copyWith(status: 'Ready', showGaze: false);
       } else {
         print(s);
-        state = state.copyWith(status: 'stopped', showGaze: false);
+        state = state.copyWith(status: 'Ready', showGaze: false);
       }
     });
 
@@ -280,23 +279,13 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     return ProctorScore(degree, degree < 90);
   }
 
-  startCalibration() async {
-    final isTracking = await _ds.isTracking();
-    if (!isTracking) {
-      await _ds.startTracking();
-    }
-    await _ds.startCalibration(usePrevious: true);
-  }
+  startCalibration() => _ds.startCalibration(usePrevious: true);
 
   stopCalibration() async {
     final isCalib = await _ds.isCalibrating();
-    final isTracking = await _ds.isTracking();
-
+    // print('isCalib $isCalib   isTracking $isTracking');
     if (isCalib) {
       await _ds.stopCalibration();
-    }
-    if (isTracking) {
-      await _ds.stopTracking();
     }
     state = state.copyWith(
       phase: InitPhase.ready,

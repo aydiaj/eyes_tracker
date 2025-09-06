@@ -20,10 +20,13 @@ dependencies:
         url: https://github.com/SimformSolutionsPvtLtd/flutter_showcaseview.git
         ref: 2cf17b339fa19aaf6cf901f8072c4010f313f81b
   shared_preferences: ^2.5.3
-  eye_tracking: ^0.1.2
-  rxdart: ^0.28.0
+  eye_tracking: any
   web: ^1.1.1
   #internet_connection_checker_plus: ^2.7.2
+
+dependency_overrides:
+  eye_tracking:
+    path: plugins/eye_tracking   # <- local folder you’ll create
 
 dev_dependencies:
   flutter_test:

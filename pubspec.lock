@@ -92,10 +92,9 @@ packages:
   eye_tracking:
     dependency: "direct main"
     description:
-      name: eye_tracking
-      sha256: df19b266a65d7a7444b7fd8cdb5fe8723d3323609c48b5e9f09db7e02183add3
-      url: "https://pub.dev"
-    source: hosted
+      path: "plugins/eye_tracking"
+      relative: true
+    source: path
     version: "0.1.2"
   eyedid_flutter:
     dependency: "direct main"
@@ -360,14 +359,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.6.1"
-  rxdart:
-    dependency: "direct main"
-    description:
-      name: rxdart
-      sha256: "5c3004a4a8dbb94bd4bf5412a4def4acdaa12e12f269737a5751369e12d1a962"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.28.0"
   shared_preferences:
     dependency: "direct main"
     description:
