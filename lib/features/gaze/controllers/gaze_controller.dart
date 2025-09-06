@@ -279,7 +279,16 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     return ProctorScore(degree, degree < 90);
   }
 
-  startCalibration() => _ds.startCalibration(usePrevious: true);
+  startCalibration() {
+    try {
+      _ds.startCalibration(usePrevious: true);
+    } on StateError {
+      debugPrint('Bad state: startCalibration failed');
+      //state = state.copyWith()
+    } catch (e) {
+      debugPrint('error');
+    }
+  }
 
   stopCalibration() async {
     final isCalib = await _ds.isCalibrating();

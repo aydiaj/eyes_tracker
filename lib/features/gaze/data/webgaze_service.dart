@@ -290,11 +290,14 @@ class WebGazeService extends GazeService {
   @override
   Future<void> startCalibration({bool usePrevious = true}) async {
     if (_calibrating) return; // already running
+    await _sdk.clearCalibration();
+    await startTracking();
     _cancelRequested = false;
 
     // Build points (5-point pattern) based on current screen
     final screenSize = _screenSize();
-    _points = EyeTracking.createStandardCalibration(
+    _points = EyeTracking.createNinePointCalibration(
+      //createStandardCalibration(
       screenWidth: screenSize.w,
       screenHeight: screenSize.h,
     );
@@ -379,6 +382,7 @@ class WebGazeService extends GazeService {
     _idx = -1;
     _calibCtrl.add(const CalibrationState(inProgress: false));
 
+    await stopTracking();
     debugPrint(
       'Calibration accuracy: ${(acc * 100).toStringAsFixed(1)}%',
     );
@@ -395,6 +399,7 @@ class WebGazeService extends GazeService {
       _idx = -1;
       _calibCtrl.add(const CalibrationState(inProgress: false));
     }
+    _sdk.stopTracking();
   }
 
   Future<void> cancelCalibration() async => stopCalibration();
