@@ -92,9 +92,11 @@ packages:
   eye_tracking:
     dependency: "direct main"
     description:
-      path: "plugins/eye_tracking"
-      relative: true
-    source: path
+      path: "."
+      ref: b5f8c1c08e00c50c5904d4268543b5d5fe347f12
+      resolved-ref: b5f8c1c08e00c50c5904d4268543b5d5fe347f12
+      url: "https://github.com/aydiaj/eye_tracking.git"
+    source: git
     version: "0.1.2"
   eyedid_flutter:
     dependency: "direct main"

@@ -40,12 +40,17 @@ class WebGazeService extends GazeService {
       final res = await _sdk.initialize();
       if (res) {
         await _sdk.setTrackingFrequency(30);
+        /*
+        Tip: start with ridge during initial calibration, 
+        then switch to weightedRidge once you have several samples, 
+        and drop to threadedRidge only if your frame rate dips.
+        */
+
         await _sdk.setAccuracyMode(
           'high',
         ); // 'high', 'medium', or 'fast'
-        await _sdk.enableBackgroundTracking(true);
         _hideWebGazerUI();
-        BrowserContextMenu.disableContextMenu();
+        //BrowserContextMenu.disableContextMenu();
         _wireStreams();
         return version;
       }
@@ -278,7 +283,7 @@ class WebGazeService extends GazeService {
   Timer? _progressTimer;
 
   Duration showDelay = const Duration(milliseconds: 500);
-  Duration collectDuration = const Duration(milliseconds: 2000);
+  Duration collectDuration = const Duration(milliseconds: 2100);
   Duration progressTick = const Duration(milliseconds: 100);
 
   ({double w, double h}) _screenSize() {
@@ -343,8 +348,10 @@ class WebGazeService extends GazeService {
     // Emit smooth progress during collection
     final totalMs = collectDuration.inMilliseconds;
     int elapsed = 0;
-
     _progressTimer?.cancel();
+
+    _sdk.addCalibrationPoint(p);
+
     _progressTimer = Timer.periodic(progressTick, (t) {
       elapsed += progressTick.inMilliseconds;
       final progress = (elapsed / totalMs).clamp(0.0, 1.0);
@@ -359,12 +366,6 @@ class WebGazeService extends GazeService {
     _progressTimer?.cancel();
 
     if (_cancelRequested || !_calibrating) return;
-
-    // Tell SDK we collected this point
-    bool ok;
-    do {
-      ok = await _sdk.addCalibrationPoint(p);
-    } while (!ok);
 
     _idx++;
     _runNextPoint();
