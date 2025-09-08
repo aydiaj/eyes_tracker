@@ -1,3 +1,4 @@
+import 'package:eyes_tracker/common/utils/enum.dart';
 import 'package:eyes_tracker/features/gaze/models/proctor_score.dart';
 import 'package:eyes_tracker/features/gaze/ui/pages/calib_page.dart';
 import 'package:eyes_tracker/providers/conn_providers.dart';
@@ -190,32 +191,52 @@ class _GazePageState extends ConsumerState<GazePage> {
                                     final showGaze = ref.watch(
                                       gazeShowGazeProvider,
                                     );
+
+                                    final currentStatus = ref.watch(
+                                      gazeStatusProvider,
+                                    );
+
                                     final ctrl = ref.read(
                                       gazeControllerProvider.notifier,
                                     );
 
-                                    return ElevatedButton(
-                                      onPressed: () {
-                                        showGaze
-                                            ? ctrl
-                                                .stopTracking()
-                                                .then((score) {
-                                                  if (context
-                                                      .mounted) {
-                                                    showScoreDialog(
-                                                      context,
-                                                      score,
-                                                    );
-                                                  }
-                                                })
-                                            : ctrl.startTracking();
-                                      },
-                                      child: Text(
-                                        showGaze
-                                            ? 'STOP TRACKING'
-                                            : 'START TRACKING',
-                                      ),
-                                    );
+                                    return showGaze
+                                        ? ElevatedButton(
+                                          onPressed: () {
+                                            ctrl.stopTracking().then((
+                                              score,
+                                            ) {
+                                              if (context.mounted) {
+                                                showScoreDialog(
+                                                  context,
+                                                  score,
+                                                );
+                                              }
+                                            });
+                                          },
+                                          child: Text(
+                                            'STOP TRACKING',
+                                          ),
+                                        )
+                                        : currentStatus ==
+                                            'Warming Up'
+                                        ? Padding(
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                vertical: 16,
+                                                horizontal: 100,
+                                              ),
+                                          child:
+                                              CircularProgressIndicator(),
+                                        )
+                                        : ElevatedButton(
+                                          onPressed: () {
+                                            ctrl.startTracking();
+                                          },
+                                          child: Text(
+                                            'START TRACKING',
+                                          ),
+                                        );
                                   },
                                 ),
                                 const SizedBox(height: 10),

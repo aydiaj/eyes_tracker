@@ -50,7 +50,7 @@ class WebGazeService extends GazeService {
           'high',
         ); // 'high', 'medium', or 'fast'
         _hideWebGazerUI();
-        //BrowserContextMenu.disableContextMenu();
+        BrowserContextMenu.disableContextMenu();
         _wireStreams();
         return version;
       }
@@ -60,7 +60,7 @@ class WebGazeService extends GazeService {
     }
   }
 
-  static const _confOk = 0.55; // gaze confidence threshold
+  static const _confOk = 0.65; // gaze confidence threshold
   static const _faceTimeout = Duration(milliseconds: 500);
   static const _tickEvery = Duration(milliseconds: 33); // ~30Hz
 
@@ -69,7 +69,10 @@ class WebGazeService extends GazeService {
 
   bool _inDrop = false;
 
-  void _onTick(Timer _) {
+  void _onTick(Timer _) async {
+    if (await _sdk.getState() == EyeTrackingState.warmingUp) {
+      return;
+    }
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final fresh =
         _lastGazeMS != null &&
@@ -120,7 +123,9 @@ class WebGazeService extends GazeService {
 
     final screen =
         inBounds
-            ? prm.ScreenState.insideOfScreen
+            ? confOk
+                ? prm.ScreenState.insideOfScreen
+                : prm.ScreenState.changetab
             : prm.ScreenState.outsideOfScreen;
 
     _metricsCtrl.add(
@@ -209,6 +214,7 @@ class WebGazeService extends GazeService {
     });
 
     _trackSub = _sdk.getGazeStream().listen((e) {
+      debugPrint('x ${e.x}   y ${e.y}    ok ${e.confidence}');
       final hasSignificantChange =
           _lastGaze == null ||
           (e.x - _lastGaze!.x).abs() > 5.0 ||
@@ -262,7 +268,7 @@ class WebGazeService extends GazeService {
       ); */
     });
 
-    _statusSub = _sdk.getState().asStream().listen((e) {
+    _statusSub = _sdk.getStateStream().listen((e) {
       final EyeTrackingState status = e;
       debugPrint('Status event: ${status.name}');
       _statusCtrl.add(status.name);
@@ -462,7 +468,7 @@ class WebGazeService extends GazeService {
   @override
   Future<void> startTracking() async {
     if (await _sdk.startTracking()) {
-      _statusCtrl.add(EyeTrackingState.tracking.name);
+      //_statusCtrl.add(EyeTrackingState.tracking.name);
       _startTicker();
     }
   }

@@ -219,9 +219,9 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     });
 
     _metricsSub = _ds.metrics$().listen((m) {
-      /*  debugPrint(
+      debugPrint(
         'metrics details: x: ${m.x} , y: ${m.y}, screen: ${m.screen}, tracking: ${m.tracking}, tMS: ${m.tsMs}',
-      ); */
+      );
       _accumulateFromMetrics(m);
     });
 
@@ -243,7 +243,17 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
       if (s.startsWith('start') || s.contains('tracking')) {
         state = state.copyWith(status: 'Tracking', showGaze: true);
       } else if (s.contains('ready')) {
-        state = state.copyWith(status: 'Ready', showGaze: false);
+        state = state.copyWith(
+          status: 'Ready',
+          ready: true,
+          showGaze: false,
+        );
+      } else if (s.contains('warming')) {
+        state = state.copyWith(
+          status: 'Warming Up',
+          ready: true,
+          showGaze: false,
+        );
       } else {
         print(s);
         state = state.copyWith(status: 'Ready', showGaze: false);
@@ -274,7 +284,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     final degree = _computeProctorDegree();
     state = state.copyWith(
       proctorDegree: degree,
-      cheating: degree < 90.0,
+      cheating: degree < 85.0,
     );
     return ProctorScore(degree, degree < 90);
   }
@@ -334,7 +344,8 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     if (tracking == prm.TrackingState.copypaste) {
       _counters.copyEvents++;
     }
-    if (screen == prm.ScreenState.changetab) {
+    if (screen == prm.ScreenState.changetab ||
+        tracking == prm.TrackingState.gazeNotFound) {
       _counters.offScreenMs += delta;
     } else if (tracking == prm.TrackingState.faceMissing) {
       _counters.faceMissingMs += delta;
