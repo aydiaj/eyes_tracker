@@ -1,7 +1,7 @@
 name: eyes_tracker
 description: "A new Flutter project."
 publish_to: 'none' 
-version: 1.0.0+1
+version: 1.1.0
 
 environment:
   sdk: ^3.7.0
@@ -20,10 +20,7 @@ dependencies:
         url: https://github.com/SimformSolutionsPvtLtd/flutter_showcaseview.git
         ref: 2cf17b339fa19aaf6cf901f8072c4010f313f81b
   shared_preferences: ^2.5.3
-  eye_tracking:
-    git:
-      url: https://github.com/aydiaj/eye_tracking.git
-      ref: 30792d537829590c670b37b7966a56e4da43d8b5
+  eye_tracking_plus: ^0.1.1
   web: ^1.1.1
   #internet_connection_checker_plus: ^2.7.2
 

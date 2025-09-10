@@ -89,15 +89,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.0.7"
-  eye_tracking:
+  eye_tracking_plus:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "30792d537829590c670b37b7966a56e4da43d8b5"
-      resolved-ref: "30792d537829590c670b37b7966a56e4da43d8b5"
-      url: "https://github.com/aydiaj/eye_tracking.git"
-    source: git
-    version: "0.1.2"
+      name: eye_tracking_plus
+      sha256: d88f23fe41201af57efa728b05ca06594176c2716c8c5a233abe351b7626529b
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.1.1"
   eyedid_flutter:
     dependency: "direct main"
     description:

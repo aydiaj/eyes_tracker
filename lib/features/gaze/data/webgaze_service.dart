@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
-import 'package:eye_tracking/eye_tracking.dart';
-import 'package:eye_tracking/eye_tracking_platform_interface.dart';
+import 'package:eye_tracking_plus/eye_tracking.dart';
+import 'package:eye_tracking_plus/eye_tracking_platform_interface.dart';
 import 'package:eyes_tracker/features/gaze/data/gaze_service.dart';
 import 'package:eyes_tracker/features/gaze/models/calibration_state.dart';
 import 'package:eyes_tracker/features/gaze/models/gaze_point.dart';
@@ -51,12 +51,86 @@ class WebGazeService extends GazeService {
         ); // 'high', 'medium', or 'fast'
         _hideWebGazerUI();
         BrowserContextMenu.disableContextMenu();
+        //Silent prewarm BEFORE wiring streams
+        // Keeps WebGazer/TF hot so real Start has no hitch.
+        await _primeSilently(timeout: const Duration(seconds: 8));
         _wireStreams();
         return version;
       }
       throw PlatformException(code: 'init_failed');
     } catch (e) {
       return 'error';
+    }
+  }
+
+  // --- service-private state for one-time priming ---
+  bool _primed = false;
+  bool _priming = false;
+
+  Future<void> _primeSilently({
+    Duration timeout = const Duration(seconds: 8),
+  }) async {
+    if (_primed || _priming) return;
+    _priming = true;
+
+    StreamSubscription? sub;
+    final ready = Completer<void>();
+    print('warming up start');
+
+    // Warm-up gate params (tune to taste)
+    const int minFrames = 20; // ~0.6–1.0s of stable data
+    const int maxDtMs = 180; // each sample ≤180ms apart
+    const double minConf = 0.40; // require some confidence
+    int streak = 0;
+    int lastTs = 0;
+
+    try {
+      // Start tracking (platform will emit, but we haven't wired outward yet)
+      final started = await _sdk.startTracking();
+      if (!started) throw StateError('warmup start failed');
+
+      // Listen directly to platform gaze stream TEMPORARILY
+      sub = _sdk.getGazeStream().listen((g) {
+        // validity
+        final confOk =
+            (g.confidence.isFinite && g.confidence >= minConf);
+        final xOk = g.x.isFinite, yOk = g.y.isFinite;
+
+        // timing
+        final t = g.timestamp.millisecondsSinceEpoch;
+        final dt = (lastTs == 0) ? 0 : (t - lastTs);
+        lastTs = t;
+        final dtOk = (lastTs == 0) || (dt <= maxDtMs);
+
+        if (confOk && xOk && yOk && dtOk) {
+          if (++streak >= minFrames && !ready.isCompleted) {
+            ready.complete();
+          }
+        } else {
+          streak = 0;
+        }
+      });
+
+      // Wait for “live” or timeout (don’t block forever)
+      await ready.future.timeout(timeout, onTimeout: () => null);
+    } catch (_) {
+      // ignore warm-up errors
+      print('error in warming up');
+    } finally {
+      // Pause immediately; models remain hot, UI never saw these frames.
+      try {
+        await _sdk.stopTracking();
+      } catch (_) {}
+
+      // Give the SDK a moment to flip to ready
+      await Future.delayed(const Duration(milliseconds: 30));
+      // (Optional sanity) log the actual state
+      final s = await _sdk.getState();
+      debugPrint('post-warm state: ${s.name}');
+
+      await sub?.cancel();
+      _primed = true;
+      _priming = false;
     }
   }
 
@@ -70,7 +144,10 @@ class WebGazeService extends GazeService {
   bool _inDrop = false;
 
   void _onTick(Timer _) async {
-    if (await _sdk.getState() == EyeTrackingState.warmingUp) {
+    final s = await _sdk.getState();
+    // Do not produce Proctor metrics while engine isn't tracking
+    if (s != EyeTrackingState.warmingUp ||
+        s == EyeTrackingState.calibrating) {
       return;
     }
     final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -137,6 +214,31 @@ class WebGazeService extends GazeService {
         y: y,
       ),
     );
+  }
+
+  Future<bool> _awaitLive({
+    Duration timeout = const Duration(seconds: 3),
+  }) async {
+    final c = Completer<bool>();
+    StreamSubscription? sub;
+    Timer? to;
+
+    sub = _sdk.getGazeStream().listen((g) {
+      final ok =
+          g.confidence >= _confOk && g.x.isFinite && g.y.isFinite;
+      if (ok && !c.isCompleted) {
+        c.complete(true);
+        sub?.cancel();
+        to?.cancel();
+      }
+    });
+
+    to = Timer(timeout, () {
+      if (!c.isCompleted) c.complete(false);
+      sub?.cancel();
+    });
+
+    return c.future;
   }
 
   int _lastMonoTs = 0;
@@ -300,9 +402,24 @@ class WebGazeService extends GazeService {
 
   @override
   Future<void> startCalibration({bool usePrevious = true}) async {
-    if (_calibrating) return; // already running
+    if (_calibrating || _priming) return; // already running
     await _sdk.clearCalibration();
     await startTracking();
+
+    final live = await _awaitLive(
+      timeout: const Duration(seconds: 2),
+    );
+    if (!live) {
+      debugPrint('Calibration postponed: no live gaze yet.');
+      // either bail gracefully…
+      // return;
+      // …or retry shortly:
+      await Future.delayed(
+        const Duration(milliseconds: 300),
+        () => startCalibration(usePrevious: usePrevious),
+      );
+    }
+
     _cancelRequested = false;
 
     // Build points (5-point pattern) based on current screen
@@ -406,10 +523,13 @@ class WebGazeService extends GazeService {
       _idx = -1;
       _calibCtrl.add(const CalibrationState(inProgress: false));
     }
-    _sdk.stopTracking();
+    await stopTracking();
   }
 
-  Future<void> cancelCalibration() async => stopCalibration();
+  Future<void> cancelCalibration() async {
+    _cancelRequested = true;
+    await stopCalibration();
+  }
 
   @override
   Future<bool> ensureCameraPermission() async {
@@ -467,6 +587,10 @@ class WebGazeService extends GazeService {
 
   @override
   Future<void> startTracking() async {
+    if (_priming) {
+      Timer(const Duration(milliseconds: 150), () => startTracking());
+      return;
+    }
     if (await _sdk.startTracking()) {
       //_statusCtrl.add(EyeTrackingState.tracking.name);
       _startTicker();

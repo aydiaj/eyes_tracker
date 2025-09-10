@@ -208,6 +208,8 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     _metricsSub?.cancel();
     _dropSub?.cancel();
 
+    var live = false;
+
     _gazeSub = _ds.gaze$().listen((g) {
       //_accumulate(g);
       final oldx = state.x, oldy = state.y;
@@ -219,6 +221,9 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     });
 
     _metricsSub = _ds.metrics$().listen((m) {
+      if (!live) {
+        return;
+      }
       debugPrint(
         'metrics details: x: ${m.x} , y: ${m.y}, screen: ${m.screen}, tracking: ${m.tracking}, tMS: ${m.tsMs}',
       );
@@ -241,22 +246,31 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
       // final currentstatus = state.status;
       //  debugPrint(currentstatus);
       if (s.startsWith('start') || s.contains('tracking')) {
+        live = true;
         state = state.copyWith(status: 'Tracking', showGaze: true);
-      } else if (s.contains('ready')) {
-        state = state.copyWith(
-          status: 'Ready',
-          ready: true,
-          showGaze: false,
-        );
-      } else if (s.contains('warming')) {
-        state = state.copyWith(
-          status: 'Warming Up',
-          ready: true,
-          showGaze: false,
-        );
       } else {
-        print(s);
-        state = state.copyWith(status: 'Ready', showGaze: false);
+        live = false;
+        if (s.contains('calibrating')) {
+          state = state.copyWith(
+            status: 'Calibrating',
+            showGaze: true,
+          );
+        } else if (s.contains('ready')) {
+          state = state.copyWith(
+            status: 'Ready',
+            ready: true,
+            showGaze: false,
+          );
+        } else if (s.contains('warming')) {
+          state = state.copyWith(
+            status: 'Warming Up',
+            ready: true,
+            showGaze: false,
+          );
+        } else {
+          print(s);
+          state = state.copyWith(status: 'Ready', showGaze: false);
+        }
       }
     });
 
