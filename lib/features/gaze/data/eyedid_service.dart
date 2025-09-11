@@ -57,6 +57,16 @@ class EyedidService implements GazeService {
   final _metricsCtrl = StreamController<prm.ProctorTick>.broadcast();
   final _dropCtrl = StreamController<String>.broadcast();
 
+  // warm gate
+  bool _startReady = false;
+  final _startReadyCtl = StreamController<bool>.broadcast();
+  Completer<void>? _prewarmInflight;
+  Completer<void>? _initLock;
+
+  // small local streak checker
+  static const int _minFrames = 6; // fast, ~200ms @ 30fps
+  static const int _maxDtMs = 220;
+
   StreamSubscription? _trackSub, _statusSub, _calibSub, _dropSub;
 
   @override
@@ -64,6 +74,8 @@ class EyedidService implements GazeService {
     final ok = await _sdk.checkCameraPermission();
     return ok ? true : await _sdk.requestCameraPermission();
   }
+
+  bool _alreadyInitialized = false;
 
   @override
   Future<bool> requestCameraPermission() async {
@@ -84,17 +96,80 @@ class EyedidService implements GazeService {
       licenseKey: licenseKey,
       options: options,
     );
-    if (res.result ||
-        res.message == InitializedResult.isAlreadyAttempting ||
+
+    if (res.result &&
         res.message ==
             InitializedResult.gazeTrackerAlreadyInitialized) {
+      _alreadyInitialized = true;
       _wireStreams();
       return _sdk.getPlatformVersion();
-    }
+    } else {}
     throw PlatformException(
       code: 'init_failed',
       message: res.message,
     );
+  }
+
+  Future<void> _ensureInitializedWithRetry({
+    int maxAttempts = 2,
+    Duration backoff = const Duration(milliseconds: 250),
+  }) async {
+    if (_alreadyInitialized) return;
+
+    // serialize concurrent init attempts
+    if (_initLock != null) return _initLock!.future;
+    final c = _initLock = Completer<void>();
+
+    String lastMsg = '';
+    try {
+      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+        final options =
+            GazeTrackerOptionsBuilder()
+                .setPreset(CameraPreset.vga640x480)
+                .setUseGazeFilter(true)
+                .setUseBlink(false)
+                .setUseUserStatus(false)
+                .build();
+
+        final res = await _sdk.initGazeTracker(
+          licenseKey: licenseKey,
+          options: options,
+        );
+
+        lastMsg = res.message;
+        if (res.result &&
+            lastMsg ==
+                InitializedResult.gazeTrackerAlreadyInitialized) {
+          _alreadyInitialized = true;
+          _wireStreams(); // safe to call more than once; we cancel existing subs
+          c.complete();
+          return;
+        }
+
+        // If keys missing or permanent failure → don’t retry
+        if (lastMsg == InitializedResult.missingKeys ||
+            lastMsg ==
+                'ERROR_MISSING_KEYS' || // safe alias if plugin differs
+            lastMsg == 'Initialization failed due to missing keys.') {
+          c.completeError(
+            PlatformException(code: 'init_failed', message: lastMsg),
+          );
+          return;
+        }
+
+        // Try a hard reinit between attempts (if available)
+        try {
+          await _sdk.releaseGazeTracker();
+        } catch (_) {}
+        await Future.delayed(backoff * attempt);
+      }
+
+      c.completeError(
+        PlatformException(code: 'init_failed', message: lastMsg),
+      );
+    } finally {
+      _initLock = null; // allow future init attempts
+    }
   }
 
   void _wireStreams() {
@@ -182,6 +257,78 @@ class EyedidService implements GazeService {
     });
   }
 
+  @override
+  Future<void> prewarm() async {
+    if (_startReady) return;
+
+    // Coalesce concurrent prewarms
+    if (_prewarmInflight != null) return _prewarmInflight!.future;
+    final c = _prewarmInflight = Completer<void>();
+
+    StreamSubscription? tempSub;
+    int streak = 0, lastTs = 0;
+    bool gotStreak = false;
+
+    Future<void> cleanup() async {
+      await tempSub?.cancel();
+      tempSub = null;
+      _prewarmInflight = null;
+    }
+
+    try {
+      // 1) Ensure initialized (with retry)
+      await _ensureInitializedWithRetry();
+
+      // 2) Attach a temporary listener for a short success streak
+      tempSub = _sdk.getTrackingEvent().listen((e) {
+        final m = MetricsInfo(e);
+        final ok = m.gazeInfo.trackingState == TrackingState.success;
+
+        final xOk = m.gazeInfo.gaze.x.isFinite;
+        final yOk = m.gazeInfo.gaze.y.isFinite;
+
+        final t = m.timestamp;
+        final dt = (lastTs == 0) ? 0 : (t - lastTs);
+        lastTs = t;
+        final dtOk = (lastTs == 0) || (dt <= _maxDtMs);
+
+        if (ok && xOk && yOk && dtOk) {
+          if (++streak >= _minFrames && !gotStreak) {
+            gotStreak = true;
+            _markStartReady(); // <- flip the gate!
+            if (!c.isCompleted) c.complete();
+          }
+        } else {
+          streak = 0;
+        }
+      });
+
+      // 3) Start tracking and wait for streak (short timeout)
+      try {
+        await _sdk.startTracking();
+      } on PlatformException catch (_) {
+        // If start fails, try a once-off reinit + retry start
+        try {
+          await _ensureInitializedWithRetry();
+          await _sdk.startTracking();
+        } catch (e) {
+          // Give up; prewarm stays not ready
+        }
+      }
+
+      await c.future.timeout(
+        const Duration(seconds: 4),
+        onTimeout: () {},
+      );
+    } finally {
+      // 4) Stop if silent (so UI doesn’t observe a visible start)
+      try {
+        await _sdk.stopTracking();
+      } catch (_) {}
+      await cleanup();
+    }
+  }
+
   prm.TrackingState _mapEyedIdTracking(TrackingState s) {
     switch (s) {
       case TrackingState.success:
@@ -257,8 +404,25 @@ class EyedidService implements GazeService {
     _statusCtrl.close();
     _calibCtrl.close();
     _dropCtrl.close();
+    _startReadyCtl.close();
     // _sdk.releaseGazeTracker();
   }
+
+  void _markStartReady() {
+    if (_startReady) return;
+    _startReady = true;
+    if (!_startReadyCtl.isClosed) {
+      try {
+        _startReadyCtl.add(true);
+      } catch (_) {}
+    }
+  }
+
+  @override
+  bool get startReady => _startReady;
+
+  @override
+  Stream<bool> startReady$() => _startReadyCtl.stream;
 }
 
 GazeService createImpl() => EyedidService.instance;

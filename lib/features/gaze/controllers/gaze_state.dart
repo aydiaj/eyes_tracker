@@ -4,6 +4,8 @@ import '../models/calibration_state.dart';
 class GazeState {
   final String version;
   final bool ready; // initialized
+  final bool startReady; // warm gate passed (new)
+  final bool isWarming; // warm in progress (new)
   final bool showGaze;
   final double x, y;
   final String status; // start/stop/err
@@ -17,6 +19,8 @@ class GazeState {
   const GazeState({
     this.version = 'unknown',
     this.ready = false,
+    this.startReady = false,
+    this.isWarming = false,
     this.showGaze = false,
     this.trackingOk = false,
     this.x = 0,
@@ -34,6 +38,8 @@ class GazeState {
   GazeState copyWith({
     String? version,
     bool? ready,
+    bool? startReady,
+    bool? isWarming,
     bool? showGaze,
     bool? trackingOk,
     double? x,
@@ -47,6 +53,8 @@ class GazeState {
   }) => GazeState(
     version: version ?? this.version,
     ready: ready ?? this.ready,
+    startReady: startReady ?? this.startReady,
+    isWarming: isWarming ?? this.isWarming,
     showGaze: showGaze ?? this.showGaze,
     x: x ?? this.x,
     y: y ?? this.y,

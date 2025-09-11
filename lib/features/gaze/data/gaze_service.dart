@@ -24,7 +24,11 @@ abstract class GazeService {
   Future<void> stopCalibration();
 
   Future<String> get version;
+  bool get startReady;
 
+  Future<void> prewarm();
+
+  Stream<bool> startReady$();
   Stream<GazePoint> gaze$();
   Stream<String> status$();
   Stream<CalibrationState> calibration$();

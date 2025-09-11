@@ -20,6 +20,9 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
 
   GazeController();
 
+  String? _lastStatusClass;
+  Timer? _retryDebounce;
+
   @override
   GazeState build() {
     _ds = ref.read(gazeServiceProvider);
@@ -29,19 +32,30 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
 
     // came back online while not ready → try again
     ref.listen<ConnectivityState>(connectivityProvider, (prev, next) {
-      //   if(prev != null && prev?.online !=null)
-      if ((prev?.online ?? false) == false &&
-          next.online == true &&
-          !state.ready) {
-        /* state = state.copyWith(
-          isRetrying: true,
-         // status: 'Retrying…',
-        ); */
-        retry();
+      final cameOnline =
+          (prev?.online ?? false) == false && next.online == true;
+      final badPhase = {
+        InitPhase.offline,
+        InitPhase.timeout,
+        InitPhase.error,
+      }.contains(state.phase);
+      if (cameOnline && badPhase && !state.ready) {
+        // debounce: only retry once after a short quiet period
+        _retryDebounce?.cancel();
+        _retryDebounce = Timer(const Duration(milliseconds: 800), () {
+          if (!state.ready) retry();
+        });
       }
+
+      /* // Auto prewarm when back online & SDK is ready but not warm yet
+    if (cameOnline && state.ready && !state.startReady) {
+      unawaited(_ds.prewarm(silent: true).catchError((_) {}));
+      state = state.copyWith(isWarming: true, status: 'Warming Up');
+    } */
     });
 
     ref.onDispose(() {
+      _retryDebounce?.cancel();
       _gazeSub?.cancel();
       _statusSub?.cancel();
       _calibSub?.cancel();
@@ -57,7 +71,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
   // timeouts for quick check
   final Duration connectivityTimeout = const Duration(seconds: 5);
   // timeouts for overall cap
-  final Duration readyTimeout = const Duration(seconds: 20);
+  final Duration readyTimeout = const Duration(seconds: 60);
 
   Timer? _readyWatchdog;
 
@@ -80,8 +94,15 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     _readyWatchdog = null;
   }
 
+  //init flags
+  bool _initInFlight = false;
+  bool _initialized = false;
+
   Future<void> init() async {
+    if (_initialized || _initInFlight) return;
+    _initInFlight = true;
     _startReadyWatchdog();
+    StreamSubscription<String>? _earlyStatus;
     try {
       final camOk = await _ds.ensureCameraPermission();
 
@@ -97,24 +118,28 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
         return;
       }
 
-      final isgazeInitialized =
-          state.ready; // await checkStillReady();
-
       final isOnline =
           await ref
               .read(connectivityProvider.notifier)
               .ensureBaseline();
-      if (!isOnline) {
+      if (!isOnline && !state.ready) {
         if (!state.isRetrying) {
           state = state.copyWith(
             status: 'Offline',
             phase: InitPhase.offline,
           );
         }
-        if (!isgazeInitialized) {
-          return;
-        }
+        return;
       }
+
+      // listen early so "warming" cancels watchdog
+      _earlyStatus = _ds.status$().listen((s) {
+        if (s.contains('warming') ||
+            s.contains('ready') ||
+            s.contains('tracking')) {
+          _stopReadyWatchdog();
+        }
+      });
 
       // SDK init, but don't let it hang forever
       if (!state.isRetrying) {
@@ -124,24 +149,27 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
         );
       }
 
-      final String version;
-      if (!isgazeInitialized) {
-        version = await _ds.initialize().timeout(
-          // leave a small margin inside the watchdog
-          readyTimeout - const Duration(seconds: 2),
-        );
-      } else {
-        version = await _ds.version;
-      }
+      final String version =
+          state.ready ? await _ds.version : await _ds.initialize();
 
+      await _earlyStatus.cancel();
+      _earlyStatus = null;
       _stopReadyWatchdog();
+
       _wire();
+
+      // Fire a silent prewarm so quiz can start ASAP once frames are good.
+      // Services implement their own single-flight, so this is race-safe:
+      // unawaited(_ds.prewarm(silent: true).catchError((_) {}));
+
       state = state.copyWith(
         version: version,
         ready: true,
         status: 'Ready',
         phase: InitPhase.ready,
       );
+
+      _initialized = true;
     } on TimeoutException {
       _stopReadyWatchdog();
       state = state.copyWith(
@@ -167,13 +195,22 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
           phase: InitPhase.error,
         );
       }
+    } finally {
+      await _earlyStatus?.cancel();
+      _initInFlight = false;
     }
   }
 
+  startWarming() {
+    try {
+      _ds.prewarm();
+    } catch (_) {}
+  }
+
   Future<void> retry() async {
-    // small debounce/backoff if you like
+    if (state.ready) return;
     state = state.copyWith(isRetrying: true);
-    await Future<void>.delayed(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     await init();
     state = state.copyWith(isRetrying: false);
   }
@@ -198,17 +235,39 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
   StreamSubscription<CalibrationState>? _calibSub;
   StreamSubscription<prm.ProctorTick>? _metricsSub;
   StreamSubscription<String>? _dropSub;
+  StreamSubscription<bool>? _startReadySub;
+  bool? _lastWarmVal;
 
   final _counters = ProctorCounters();
 
   void _wire() {
     _gazeSub?.cancel();
+    _startReadySub?.cancel();
     _statusSub?.cancel();
     _calibSub?.cancel();
     _metricsSub?.cancel();
     _dropSub?.cancel();
+    _startReadySub?.cancel();
 
     var live = false;
+
+    // Watch the warm gate once (works for both web & mobile services)
+    _lastWarmVal = _ds.startReady;
+    if (_lastWarmVal!) {
+      state = state.copyWith(
+        startReady: _lastWarmVal,
+        isWarming: false,
+        status: 'Ready',
+      );
+    }
+
+    debugPrint('start ready $_lastWarmVal');
+    _startReadySub = _ds.startReady$().listen((ok) {
+      if (_lastWarmVal == ok) return; // de-dupe
+      _lastWarmVal = ok;
+      state = state.copyWith(startReady: ok, isWarming: false);
+      debugPrint('stream start ready $ok');
+    });
 
     _gazeSub = _ds.gaze$().listen((g) {
       //_accumulate(g);
@@ -241,36 +300,53 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
   calibrating,
   paused,
   error, */
+    _lastStatusClass = null; // reset when (re)wiring
+
     _statusSub = _ds.status$().listen((s) {
-      // debugPrint(s);
-      // final currentstatus = state.status;
-      //  debugPrint(currentstatus);
-      if (s.startsWith('start') || s.contains('tracking')) {
-        live = true;
-        state = state.copyWith(status: 'Tracking', showGaze: true);
-      } else {
-        live = false;
-        if (s.contains('calibrating')) {
+      final cls = _classifyStatus(s);
+      if (cls == _lastStatusClass) {
+        return; // ignore identical consecutive class
+      }
+      _lastStatusClass = cls;
+
+      switch (cls) {
+        case 'tracking':
+          live = true;
+          state = state.copyWith(status: 'Tracking', showGaze: true);
+          break;
+        case 'calibrating':
+          live = false;
           state = state.copyWith(
             status: 'Calibrating',
             showGaze: true,
           );
-        } else if (s.contains('ready')) {
+          break;
+        case 'ready':
+          live = false;
+          _stopReadyWatchdog();
           state = state.copyWith(
             status: 'Ready',
             ready: true,
+            isWarming: false,
             showGaze: false,
           );
-        } else if (s.contains('warming')) {
+          break;
+        case 'warming':
+          live = false;
           state = state.copyWith(
             status: 'Warming Up',
-            ready: true,
+            ready: true, //might change
+            isWarming: true,
             showGaze: false,
           );
-        } else {
-          print(s);
-          state = state.copyWith(status: 'Ready', showGaze: false);
-        }
+          break;
+        default:
+          live = false;
+          state = state.copyWith(
+            status: 'Idle',
+            isWarming: false,
+            showGaze: false,
+          );
       }
     });
 
@@ -289,6 +365,20 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
   }
 
   Future<void> startTracking() async {
+    /* // Require warm gate
+    if (!state.startReady) {
+      state = state.copyWith(isWarming: true, status: 'Warming');
+      try {
+        await _ds.prewarm(
+          silent: false,
+        ); // active warm (platform may resume/pause)
+      } catch (_) {}
+    }
+    if (!state.startReady) {
+      // Still not warm → don’t start tracking; UI can show a toast
+      state = state.copyWith(isWarming: false, status: 'Ready');
+      return;
+    } */
     _resetCounters();
     await _ds.startTracking();
   }
@@ -303,7 +393,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     return ProctorScore(degree, degree < 90);
   }
 
-  startCalibration() {
+  /*   startCalibration() {
     try {
       _ds.startCalibration(usePrevious: true);
     } on StateError {
@@ -311,6 +401,25 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
       //state = state.copyWith()
     } catch (e) {
       debugPrint('error');
+    }
+  } */
+
+  Future<void> startCalibration() async {
+    try {
+      await _ds.startCalibration(usePrevious: true);
+    } on StateError catch (e, st) {
+      debugPrint('Bad state: startCalibration failed: $e');
+      debugPrint('error trace: ${st.toString()}');
+    } on PlatformException catch (e) {
+      debugPrint(
+        'Platform error during calibration: ${e.code} ${e.message}',
+      );
+      // state = state.copyWith(status: 'Calibration error', ...);
+    } catch (e) {
+      debugPrint('Unexpected calibration error: $e');
+    } finally {
+      // optional cleanup or UI unblocking
+      // state = state.copyWith(status: 'Ready');
     }
   }
 
@@ -329,6 +438,16 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
 
   Future<void> startCalib() =>
       _ds.startCalibration(usePrevious: true);
+
+  String _classifyStatus(String s) {
+    if (s.startsWith('start') || s.contains('tracking')) {
+      return 'tracking';
+    }
+    if (s.contains('calibrating')) return 'calibrating';
+    if (s.contains('ready') || s.contains('stop')) return 'ready';
+    if (s.contains('warming')) return 'warming';
+    return 'other';
+  }
 
   void updateScreenSize(Size size) {
     // Only write if changed.

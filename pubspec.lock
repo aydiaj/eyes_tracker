@@ -93,10 +93,10 @@ packages:
     dependency: "direct main"
     description:
       name: eye_tracking_plus
-      sha256: d88f23fe41201af57efa728b05ca06594176c2716c8c5a233abe351b7626529b
+      sha256: f0c10f9236df19e90f792117b8102a7bfafd1e1aa741ec2661832f6003852766
       url: "https://pub.dev"
     source: hosted
-    version: "0.1.1"
+    version: "0.1.2"
   eyedid_flutter:
     dependency: "direct main"
     description:

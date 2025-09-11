@@ -26,16 +26,29 @@ class WebGazeService extends GazeService {
   final _calibCtrl = StreamController<CalibrationState>.broadcast();
   final _metricsCtrl = StreamController<prm.ProctorTick>.broadcast();
   final _dropCtrl = StreamController<String>.broadcast();
-
+  final _startReadyCtrl = StreamController<bool>.broadcast();
   StreamSubscription? _trackSub,
+      canStartSub,
       _statusSub,
       _dropSub,
       _tabSub,
+      _startSub,
       _keyCopyPasteSub;
   Timer? _ticker; // 30Hz synthesizer
 
+  Completer<void>? _initOnce;
+  Completer<void>? _primeOnce;
+  bool _wired = false;
+  bool canStart = false;
+
   @override
   Future<String> initialize() async {
+    if (_initOnce != null) {
+      // someone already initializing
+      await _initOnce!.future;
+      return version;
+    }
+    _initOnce = Completer<void>();
     try {
       final res = await _sdk.initialize();
       if (res) {
@@ -53,13 +66,19 @@ class WebGazeService extends GazeService {
         BrowserContextMenu.disableContextMenu();
         //Silent prewarm BEFORE wiring streams
         // Keeps WebGazer/TF hot so real Start has no hitch.
-        await _primeSilently(timeout: const Duration(seconds: 8));
-        _wireStreams();
+        // await _primeSilently(timeout: const Duration(seconds: 60));
+
+        if (!_wired) {
+          _wireStreams();
+          _wired = true;
+        }
         return version;
       }
       throw PlatformException(code: 'init_failed');
     } catch (e) {
       return 'error';
+    } finally {
+      _initOnce!.complete();
     }
   }
 
@@ -70,25 +89,29 @@ class WebGazeService extends GazeService {
   Future<void> _primeSilently({
     Duration timeout = const Duration(seconds: 8),
   }) async {
-    if (_primed || _priming) return;
+    if (_primed) return;
+    if (_primeOnce != null) {
+      // warm-up already running
+      return _primeOnce!.future;
+    }
+    _primeOnce = Completer<void>();
     _priming = true;
 
     StreamSubscription? sub;
     final ready = Completer<void>();
     print('warming up start');
 
-    // Warm-up gate params (tune to taste)
-    const int minFrames = 20; // ~0.6–1.0s of stable data
-    const int maxDtMs = 180; // each sample ≤180ms apart
-    const double minConf = 0.40; // require some confidence
-    int streak = 0;
-    int lastTs = 0;
-
     try {
       // Start tracking (platform will emit, but we haven't wired outward yet)
       final started = await _sdk.startTracking();
       if (!started) throw StateError('warmup start failed');
 
+      // Warm-up gate params (tune to taste)
+      const int minFrames = 12; // ~0.6–1.0s of stable data
+      const int maxDtMs = 220; // each sample ≤180ms apart
+      const double minConf = 0.40; // require some confidence
+      int streak = 0;
+      int lastTs = 0;
       // Listen directly to platform gaze stream TEMPORARILY
       sub = _sdk.getGazeStream().listen((g) {
         // validity
@@ -112,10 +135,14 @@ class WebGazeService extends GazeService {
       });
 
       // Wait for “live” or timeout (don’t block forever)
-      await ready.future.timeout(timeout, onTimeout: () => null);
+      await ready.future.timeout(
+        timeout,
+        onTimeout: () {
+          debugPrint('warming timeout');
+        },
+      );
     } catch (_) {
-      // ignore warm-up errors
-      print('error in warming up');
+      debugPrint('error in warming up');
     } finally {
       // Pause immediately; models remain hot, UI never saw these frames.
       try {
@@ -124,13 +151,13 @@ class WebGazeService extends GazeService {
 
       // Give the SDK a moment to flip to ready
       await Future.delayed(const Duration(milliseconds: 30));
-      // (Optional sanity) log the actual state
       final s = await _sdk.getState();
       debugPrint('post-warm state: ${s.name}');
 
       await sub?.cancel();
       _primed = true;
       _priming = false;
+      _primeOnce!.complete();
     }
   }
 
@@ -146,8 +173,10 @@ class WebGazeService extends GazeService {
   void _onTick(Timer _) async {
     final s = await _sdk.getState();
     // Do not produce Proctor metrics while engine isn't tracking
-    if (s != EyeTrackingState.warmingUp ||
+    if (s == EyeTrackingState.warmingUp ||
         s == EyeTrackingState.calibrating) {
+      return;
+    } else if (s != EyeTrackingState.tracking) {
       return;
     }
     final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -276,6 +305,7 @@ class WebGazeService extends GazeService {
     _dropSub?.cancel();
     _tabSub?.cancel();
     _keyCopyPasteSub?.cancel();
+    _startSub?.cancel();
 
     _tabSub = document.onVisibilityChange.listen((e) async {
       final inTracking = await isTracking();
@@ -313,6 +343,12 @@ class WebGazeService extends GazeService {
           );
         }
       }
+    });
+
+    _startSub = _sdk.getWarmedOnceStream().listen((ok) {
+      debugPrint('warmed change');
+      _startReadyCtrl.add(ok);
+      _statusCtrl.add('ready');
     });
 
     _trackSub = _sdk.getGazeStream().listen((e) {
@@ -407,17 +443,22 @@ class WebGazeService extends GazeService {
     await startTracking();
 
     final live = await _awaitLive(
-      timeout: const Duration(seconds: 2),
+      timeout: const Duration(seconds: 5),
     );
     if (!live) {
+      //start tracking failed
       debugPrint('Calibration postponed: no live gaze yet.');
+      _cancelRequested = true;
+      throw StateError('startCalibration failed: no live gaze yet.');
       // either bail gracefully…
       // return;
       // …or retry shortly:
-      await Future.delayed(
-        const Duration(milliseconds: 300),
+      /* await Future.delayed(
+        const Duration(milliseconds: 500),
         () => startCalibration(usePrevious: usePrevious),
       );
+      _cancelRequested = false;
+      return; */
     }
 
     _cancelRequested = false;
@@ -585,12 +626,21 @@ class WebGazeService extends GazeService {
     _dropCtrl.close();
   }
 
+  bool _startQueued = false; // //race happens
+
   @override
   Future<void> startTracking() async {
-    if (_priming) {
-      Timer(const Duration(milliseconds: 150), () => startTracking());
+    /* if (_primeOnce != null && !_primeOnce!.isCompleted) {
+      if (!_startQueued) {
+        _startQueued = true;
+        _primeOnce!.future.then((_) {
+          _startQueued = false;
+          startTracking();
+        });
+      }
       return;
-    }
+    } */
+
     if (await _sdk.startTracking()) {
       //_statusCtrl.add(EyeTrackingState.tracking.name);
       _startTicker();
@@ -674,6 +724,18 @@ class WebGazeService extends GazeService {
       // ignore
     }
   }
+
+  @override
+  Future<void> prewarm() async {
+    await _sdk.prewarm();
+  }
+
+  @override
+  bool get startReady => _sdk.getWarmedOnce();
+
+  @override
+  Stream<bool> startReady$() => _startReadyCtrl.stream;
+  //Stream<bool> startReady$() => _sdk.getWarmedOnceStream();
 }
 
 // Required for conditional import

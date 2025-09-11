@@ -31,6 +31,16 @@ final gazeTrackingOkProvider = Provider.autoDispose<bool>((ref) {
   );
 });
 
+final gazeStartReadyProvider = Provider.autoDispose<bool>((ref) {
+  return ref.watch(
+    gazeControllerProvider.select((c) => c.startReady),
+  );
+});
+
+final gazeisWarmingProvider = Provider.autoDispose<bool>((ref) {
+  return ref.watch(gazeControllerProvider.select((c) => c.isWarming));
+});
+
 final gazeVisibleProvider = Provider.autoDispose<bool>((ref) {
   final show = ref.watch(
     gazeControllerProvider.select((c) => c.showGaze),

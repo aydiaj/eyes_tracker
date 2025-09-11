@@ -184,12 +184,21 @@ class _GazePageState extends ConsumerState<GazePage> {
                                     final ready = ref.watch(
                                       gazeReadyProvider,
                                     );
+
                                     if (!ready) {
                                       return const SizedBox.shrink();
                                     }
 
                                     final showGaze = ref.watch(
                                       gazeShowGazeProvider,
+                                    );
+
+                                    final startReady = ref.watch(
+                                      gazeStartReadyProvider,
+                                    );
+
+                                    final isWarming = ref.watch(
+                                      gazeisWarmingProvider,
                                     );
 
                                     final currentStatus = ref.watch(
@@ -199,6 +208,11 @@ class _GazePageState extends ConsumerState<GazePage> {
                                     final ctrl = ref.read(
                                       gazeControllerProvider.notifier,
                                     );
+
+                                    bool canStart =
+                                        ready &&
+                                        startReady &&
+                                        !isWarming;
 
                                     return showGaze
                                         ? ElevatedButton(
@@ -218,8 +232,7 @@ class _GazePageState extends ConsumerState<GazePage> {
                                             'STOP TRACKING',
                                           ),
                                         )
-                                        : currentStatus ==
-                                            'Warming Up'
+                                        : isWarming
                                         ? Padding(
                                           padding:
                                               const EdgeInsets.symmetric(
@@ -229,13 +242,26 @@ class _GazePageState extends ConsumerState<GazePage> {
                                           child:
                                               CircularProgressIndicator(),
                                         )
-                                        : ElevatedButton(
+                                        : canStart
+                                        ? ElevatedButton(
                                           onPressed: () {
                                             ctrl.startTracking();
                                           },
                                           child: Text(
                                             'START TRACKING',
                                           ),
+                                        )
+                                        : Column(
+                                          children: [
+                                            ElevatedButton(
+                                              onPressed: () {
+                                                ctrl.startWarming();
+                                              },
+                                              child: Text(
+                                                'START Warming',
+                                              ),
+                                            ),
+                                          ],
                                         );
                                   },
                                 ),
