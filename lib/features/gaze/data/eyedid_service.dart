@@ -106,6 +106,8 @@ class EyedidService implements GazeService {
     );
   }
 
+  GazePoint? _currGaze;
+
   void _wireStreams() {
     _trackSub?.cancel();
     _statusSub?.cancel();
@@ -114,15 +116,21 @@ class EyedidService implements GazeService {
 
     _trackSub = _sdk.getTrackingEvent().listen((e) {
       final metrics = MetricsInfo(e);
+
       final ok =
-          metrics.gazeInfo.trackingState == TrackingState.success;
-      _gazeCtrl.add(
-        GazePoint(
-          x: metrics.gazeInfo.gaze.x,
-          y: metrics.gazeInfo.gaze.y,
-          trackingOk: ok, //green point when ok, else red
-        ),
+          metrics.gazeInfo.trackingState == TrackingState.success ||
+          (metrics.gazeInfo.trackingState ==
+                      TrackingState.gazeNotFound &&
+                  _currGaze != null
+              ? _currGaze!.trackingOk
+              : false);
+
+      _currGaze = GazePoint(
+        x: metrics.gazeInfo.gaze.x,
+        y: metrics.gazeInfo.gaze.y,
+        trackingOk: ok, //green point when ok, else red
       );
+      _gazeCtrl.add(_currGaze!);
       _metricsCtrl.add(
         prm.ProctorTick(
           tsMs: metrics.timestamp,

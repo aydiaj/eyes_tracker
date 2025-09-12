@@ -270,6 +270,12 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     });
 
     _gazeSub = _ds.gaze$().listen((g) {
+      // Show dot on first/any valid sample
+      if (!state.showGaze &&
+          g.trackingOk &&
+          state.status == 'Tracking') {
+        state = state.copyWith(showGaze: true);
+      }
       //_accumulate(g);
       final oldx = state.x, oldy = state.y;
       state = state.copyWith(
@@ -381,10 +387,12 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     } */
     _resetCounters();
     await _ds.startTracking();
+    state = state.copyWith(status: 'Tracking', showGaze: true);
   }
 
   Future<ProctorScore> stopTracking() async {
     await _ds.stopTracking();
+    state = state.copyWith(status: 'Ready', showGaze: false);
     final degree = _computeProctorDegree();
     state = state.copyWith(
       proctorDegree: degree,
