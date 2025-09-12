@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:showcaseview/showcaseview.dart';
 import '../../../../common/ui/widgets/connectivity_bannar.dart';
+import '../widgets/calib_target.dart';
 import '../widgets/gaze_dot.dart';
 
 class GazePage extends ConsumerStatefulWidget {
@@ -20,6 +21,7 @@ class GazePage extends ConsumerStatefulWidget {
 class _GazePageState extends ConsumerState<GazePage> {
   static const _scope = 'home_calibration';
   final _calibrationKey = GlobalKey();
+  final overlayKey = GlobalKey();
 
   @override
   void initState() {
@@ -131,6 +133,7 @@ class _GazePageState extends ConsumerState<GazePage> {
           });
 
           return Stack(
+            key: overlayKey,
             children: [
               Consumer(
                 builder: (ctx, ref, _) {
@@ -341,22 +344,27 @@ class _GazePageState extends ConsumerState<GazePage> {
                   );
 
                   if (showGaze && !inCalib) {
-                    return GazeDot(
+                    /*  return GazeDot(
                       offset: ref.watch(gazeOffsetProvider),
                       ok: ref.watch(gazeTrackingOkProvider),
+                    ); */
+                    return ComGazeDot(
+                      global: ref.watch(
+                        gazeOffsetProvider,
+                      ), // from service/SDK (global coords)
+                      ok: ref.watch(gazeTrackingOkProvider),
+                      viewportKey: overlayKey,
+                      sdkUsesPhysicalPixels:
+                          false, // true if Eyedid returns physical px
+                      mirrorX:
+                          false, // true if you need horizontal mirror
                     );
                   } else if (inCalib) {
-                    return Positioned(
-                      left: nextX - 10,
-                      top: nextY - 10,
-                      child: SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          value: progress,
-                          backgroundColor: Colors.grey,
-                        ),
-                      ),
+                    return CalibTarget(
+                      x: nextX,
+                      y: nextY,
+                      viewportKey: overlayKey,
+                      progress: progress,
                     );
                   }
                   {
