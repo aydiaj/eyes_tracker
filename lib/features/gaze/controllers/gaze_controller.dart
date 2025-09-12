@@ -102,7 +102,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     if (_initialized || _initInFlight) return;
     _initInFlight = true;
     _startReadyWatchdog();
-    StreamSubscription<String>? _earlyStatus;
+    StreamSubscription<String>? earlyStatus;
     try {
       final camOk = await _ds.ensureCameraPermission();
 
@@ -133,7 +133,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
       }
 
       // listen early so "warming" cancels watchdog
-      _earlyStatus = _ds.status$().listen((s) {
+      earlyStatus = _ds.status$().listen((s) {
         if (s.contains('warming') ||
             s.contains('ready') ||
             s.contains('tracking')) {
@@ -152,8 +152,8 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
       final String version =
           state.ready ? await _ds.version : await _ds.initialize();
 
-      await _earlyStatus.cancel();
-      _earlyStatus = null;
+      await earlyStatus.cancel();
+      earlyStatus = null;
       _stopReadyWatchdog();
 
       _wire();
@@ -196,7 +196,7 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
         );
       }
     } finally {
-      await _earlyStatus?.cancel();
+      await earlyStatus?.cancel();
       _initInFlight = false;
     }
   }
@@ -388,9 +388,9 @@ class GazeController extends AutoDisposeNotifier<GazeState> {
     final degree = _computeProctorDegree();
     state = state.copyWith(
       proctorDegree: degree,
-      cheating: degree < 85.0,
+      cheating: degree < 75.0, //needs confirmation
     );
-    return ProctorScore(degree, degree < 90);
+    return ProctorScore(degree, degree < 75);
   }
 
   /*   startCalibration() {
